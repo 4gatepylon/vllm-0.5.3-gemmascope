@@ -438,17 +438,6 @@ class GemmaScopeModelLoader(DefaultModelLoader):
                     **extra_kwargs,
                 )
 
-            # Load base model weights (reuse parent's iterator)
-            # NOTE: this is heavily using all the default model loader behavior.
-            # The invocation is copy-pasted.
-            model.load_weights(
-                self._get_weights_iterator(
-                    model_config.model,
-                    model_config.revision,
-                    fall_back_to_pt=getattr(model, "fall_back_to_pt_during_load", True),
-                )
-            )
-
             # Initialize or load SAE weights
             for layer_idx, sae_config in self.sae_configs.items():
                 sae_module = model.model.layers[layer_idx].sae
@@ -467,6 +456,18 @@ class GemmaScopeModelLoader(DefaultModelLoader):
                     initialize_dummy_weights(sae_module)
                 else:
                     self._load_sae_weights(sae_module, sae_config, layer_idx)
+            
+            # Load base model weights (reuse parent's iterator)
+            # NOTE: this is heavily using all the default model loader behavior.
+            # The invocation is copy-pasted.
+            # NOTE: this must be called 2nd
+            model.load_weights(
+                self._get_weights_iterator(
+                    model_config.model,
+                    model_config.revision,
+                    fall_back_to_pt=getattr(model, "fall_back_to_pt_during_load", True),
+                )
+            )
 
             # This is copied from the default model loader
             for _, module in model.named_modules():
