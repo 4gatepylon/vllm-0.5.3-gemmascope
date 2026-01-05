@@ -294,6 +294,27 @@ class DefaultModelLoader(BaseModelLoader):
                     quant_method.process_weights_after_loading(module)
         return model.eval()
 
+class GemmaScopeModelLoader(BaseModelLoader):
+    """
+    Model loader for GemmaScope models.
+    
+    It supports the following modes:
+    - dummy: do the same  thing as dummy loader (set random values to weights)
+    - dummy-sae: load random weights into sae parameters, otherwise follow the
+        default behavior
+    - identity-sae: load the sae parameters using a specific strategy to make it an identity
+        mapping; specifically, set all biases to zero and then set half the encoder weights to
+        +1 on each axis and half to -1 on each axis and zero on all other rows (needs at least
+        model_dim * 2 rows per enc/dec in SAE).
+    - multiple-sources: basically default model behavior, but load from each source in sequence
+        (you can provide multiple names or paths, for example)
+    - auto/safetensors/pt/etc...: copy the default model loader behavior
+
+    XXX(Adriano) please implement this; we might want to do it slightly differently
+    """
+    def __init__(self, load_config: LoadConfig):
+        super().__init__(load_config)
+        raise NotImplementedError("GemmaScopeModelLoader is not implemented yet")
 
 class DummyModelLoader(BaseModelLoader):
     """Model loader that will set model weights to random values."""
@@ -851,5 +872,8 @@ def get_model_loader(load_config: LoadConfig) -> BaseModelLoader:
 
     if load_config.load_format == LoadFormat.BITSANDBYTES:
         return BitsAndBytesModelLoader(load_config)
+    
+    if load_config.load_format == LoadFormat.GEMMASCOPE:
+        return GemmaScopeModelLoader(load_config)
 
     return DefaultModelLoader(load_config)

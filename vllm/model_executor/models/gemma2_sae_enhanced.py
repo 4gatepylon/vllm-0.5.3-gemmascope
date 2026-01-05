@@ -38,13 +38,12 @@ from .interfaces import SupportsLoRA
 
 
 class Gemma2SAEEnhanced(nn.Module):
-
     def __init__(
         self,
         input_size: int,
         sae_size: int,  # = hidden_size * expansion_factor
-        hidden_act: str,
-        hidden_activation: str,
+        hidden_act: str = "jumprelu",
+        hidden_activation: str = "jumprelu",
         quant_config: Optional[QuantizationConfig] = None,
     ) -> None:
         super().__init__()
@@ -53,26 +52,26 @@ class Gemma2SAEEnhanced(nn.Module):
         self.gate_up_proj = ColumnParallelLinear(
             input_size=input_size,
             output_size=sae_size,
-            bias=False,  # TODO(Adriano) fix this if needed
+            # TODO(Adriano) we may want to verify it is true that ALL of the
+            # SAEs have bias. They claim to have it: https://arxiv.org/pdf/2408.05147
+            # and checking on the weights the bias is present so in theory this SHOULD
+            # be `True`
+            bias=True,
             quant_config=quant_config,
         )
         self.down_proj = RowParallelLinear(
             input_size=sae_size,
             output_size=input_size,
-            bias=False,
+            bias=True,
             quant_config=quant_config,
         )
-        # TODO(Adriano) not sure about a lot of the arguments here
-        # self.act_fn = JumpReLU(sae_size) # Please fix this!
+        self.act_fn = JumpReLU(sae_size)
         if not (hidden_act == hidden_activation == "jumprelu"):
             raise ValueError(
-                "Gemma2 uses `gelu_pytorch_tanh` as the hidden activation "
+                "GemmaScope uses `jumprelu` as the hidden activation "
                 "function. Please set `hidden_act` and `hidden_activation` to "
-                "`gelu_pytorch_tanh`."
+                "`jumprelu`."
             )
-    
-    def act_fn(self, x: torch.Tensor) -> torch.Tensor:
-        return x # XXX fix this!
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Copied from Gemma2MLP classes
@@ -82,18 +81,45 @@ class Gemma2SAEEnhanced(nn.Module):
         return x
 
 
-class SAEEnhancedGemma2DecoderLayer(nn.Module):
+# XXX(adriano) move this to the right place please
+from dataclasses import dataclass
 
+
+@dataclass
+class SAEConfig:
+    # If input size is not set, then it is set to the hidden size of the model
+    input_size: int | None = None
+
+    # One of sae_size and expansion_factor must be provided
+    sae_size: int | None = None
+    expansion_factor: int | None = None
+
+    # These must be "jumprelu"
+    hidden_act: str = "jumprelu"
+    hidden_activation: str = "jumprelu"
+
+    # this is carried over from MLP
+    quant_config: Optional[QuantizationConfig] = None
+
+
+class SAEEnhancedGemma2DecoderLayer(nn.Module):
     def __init__(
         self,
         layer_idx: int,
         config: Gemma2Config,
         cache_config: Optional[CacheConfig] = None,
         quant_config: Optional[QuantizationConfig] = None,
-        sae_config: None = None,
-        # TODO(Adriano) add SAE configuration here
+        **kwargs,
     ) -> None:
+        if "sae_config" not in kwargs:
+            raise ValueError(
+                "sae_config must be provided to SAEEnhancedGemma2DecoderLayer"
+            )
+        sae_config = kwargs.pop("sae_config")
+        if sae_config is not None and not isinstance(sae_config, SAEConfig):
+            raise ValueError("sae_config must be an instance of SAEConfig")
         super().__init__()
+        self.sae_config = sae_config
         self.hidden_size = config.hidden_size
         self.self_attn = Gemma2Attention(
             layer_idx=layer_idx,
@@ -126,15 +152,29 @@ class SAEEnhancedGemma2DecoderLayer(nn.Module):
             config.hidden_size, eps=config.rms_norm_eps
         )
 
-        # NOTE: you put the SAE on the layer who takes it AS OUTPUT
-        # XXX adriano it looks like if this here is set to non-None then we need to have
-        # the SAE in the safetensors dict for this to work! with the proper names...
-        # (which somehow we need to get)
         self.sae = None
+        self.sae_size = None
         if self.sae_config is not None:
+            self.sae_size = (
+                self.sae_config.sae_size
+                or self.hidden_size * self.sae_config.expansion_factor
+            )
+            if self.sae_size is None:
+                raise ValueError(
+                    f"sae_size (={self.sae_config.sae_size}) must "
+                    + f"be set (or expansion_factor={self.sae_config.expansion_factor})"
+                )
+            if (
+                self.sae_config.input_size is not None
+                and self.sae_config.input_size != self.hidden_size
+            ):
+                raise ValueError(
+                    f"input_size (={self.sae_config.input_size}) must be the same "
+                    + f"as the hidden size (={self.hidden_size})"
+                )
             self.sae = Gemma2SAEEnhanced(
-                input_size=config.hidden_size,
-                sae_size=config.hidden_size * 8, # XXX
+                input_size=self.hidden_size,
+                sae_size=self.sae_size,
                 hidden_act="jumprelu",
                 hidden_activation="jumprelu",
                 quant_config=quant_config,
@@ -147,7 +187,7 @@ class SAEEnhancedGemma2DecoderLayer(nn.Module):
         kv_cache: torch.Tensor,
         attn_metadata: AttentionMetadata,
         residual: Optional[torch.Tensor],
-    ) -> Tuple[torch.Tensor, torch.Tensor | None]: # <- MAY return None! (changed)
+    ) -> Tuple[torch.Tensor, torch.Tensor | None]:  # <- MAY return None! (changed)
         if residual is None:
             residual = hidden_states
             hidden_states = self.input_layernorm(hidden_states)
@@ -166,37 +206,31 @@ class SAEEnhancedGemma2DecoderLayer(nn.Module):
         )
         hidden_states = self.mlp(hidden_states)
         hidden_states = self.post_feedforward_layernorm(hidden_states)
-        # TODO(Adriano) understand where exactly to put the SAE for equality
-        # with HF (it starts to be more complicated because the outptus from
-        # this here are such that hidden_states + residual get summed in the
-        # self.input_layernorm, meaning the SAE might need to go INTO the
-        # layernorm or the layernorm may have to be changed or we may
-        # prefer to rewrite/re-order a lot of this... FUCK)
+        # TODO(Adriano) confirm that this is not fking up with the input layernorms.
         if self.sae is not None:
             # Merge to get the residual at this point
             actual_residual_stream = hidden_states + residual
             hidden_states = self.sae(actual_residual_stream)
-            return hidden_states, None # <- next layer will proc. indep.
+            return hidden_states, None  # <- next layer will proc. indep.
         return hidden_states, residual
 
 
 class SAEEnhancedGemma2Model(nn.Module):
-    # TODO(Adriano) confirm more carefully in vllm/config.py whether it is "architectures" or "name_or_path"
-    # or model_type that matters (it looks like HF uses model_type to decide what to load with via automodel
-    # whereas this uses architectures... in the registry in ./__init__.py``)
     def __init__(
         self,
         config: Gemma2Config,
         cache_config: Optional[CacheConfig] = None,
         quant_config: Optional[QuantizationConfig] = None,
-        # TODO(Adriano) add SAE configuration here
+        **kwargs,
     ) -> None:
-        print("=" * 100)
-        print("CALLING `SAEEnhancedGemma2Model` WITH CONFIG ARCHITECTURES:")
-        print("config.architectures", config.architectures)
-        print("=" * 100)
+        if "sae_configs" not in kwargs:
+            raise ValueError("sae_configs must be provided to SAEEnhancedGemma2Model")
+        sae_configs: dict[int, SAEConfig] | None = kwargs.pop("sae_config", None)
+        if sae_configs is None:
+            sae_configs = {}
         super().__init__()
         self.config = config
+        self.sae_configs = sae_configs
 
         self.embed_tokens = VocabParallelEmbedding(
             config.vocab_size,
@@ -204,9 +238,12 @@ class SAEEnhancedGemma2Model(nn.Module):
         )
         self.layers = nn.ModuleList(
             [
-                # TODO(Adriano) pass down the SAE configuration here
                 SAEEnhancedGemma2DecoderLayer(
-                    layer_idx, config, cache_config, quant_config
+                    layer_idx,
+                    config,
+                    cache_config,
+                    quant_config,
+                    sae_config=sae_configs.get(layer_idx, None),
                 )
                 for layer_idx in range(config.num_hidden_layers)
             ]
@@ -274,15 +311,13 @@ class Gemma2SAEEnhancedForCausalLM(nn.Module, SupportsLoRA):
         cache_config: Optional[CacheConfig] = None,
         quant_config: Optional[QuantizationConfig] = None,
         lora_config: Optional[LoRAConfig] = None,
-        # TODO(Adriano) add SAE configuration here; I'm not sure how if at all it will
-        # be passed in (unclear how the arguments are hydrated here...)
+        **kwargs,
     ) -> None:
         del lora_config  # Unused.
         super().__init__()
         self.config = config
         self.quant_config = quant_config
-        # TODO(Adriano) add SAE configuration here
-        self.model = SAEEnhancedGemma2Model(config, cache_config, quant_config)
+        self.model = SAEEnhancedGemma2Model(config, cache_config, quant_config, **kwargs)
         self.logits_processor = LogitsProcessor(
             config.vocab_size, soft_cap=config.final_logit_softcapping
         )
@@ -316,7 +351,6 @@ class Gemma2SAEEnhancedForCausalLM(nn.Module, SupportsLoRA):
         return next_tokens
 
     def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]):
-        # TODO(Adriano) deal with the SAE weights please here
         stacked_params_mapping = [
             # (param_name, shard_name, shard_id)
             ("qkv_proj", "q_proj", "q"),
@@ -346,6 +380,12 @@ class Gemma2SAEEnhancedForCausalLM(nn.Module, SupportsLoRA):
                     continue
                 # Skip loading extra bias for GPTQ models.
                 if name.endswith(".bias") and name not in params_dict:
+                    continue
+                if name not in params_dict:
+                    # NOTE: we ignore these so as to make it easier to load from safetensors checkpoints
+                    # where we symlink in the SAE weights for BOTH the old and new models (i.e. Gemma2
+                    # and Gemma2SAEEnhanced). This means that we can save memory by not needing to store
+                    # the disk contents twice.
                     continue
                 param = params_dict[name]
                 weight_loader = getattr(param, "weight_loader", default_weight_loader)
