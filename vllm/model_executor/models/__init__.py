@@ -31,6 +31,12 @@ _GENERATION_MODELS = {
     "FuyuForCausalLM": ("fuyu", "FuyuForCausalLM"),
     "GemmaForCausalLM": ("gemma", "GemmaForCausalLM"),
     "Gemma2ForCausalLM": ("gemma2", "Gemma2ForCausalLM"),
+    # NOTE: we could have used `https://docs.vllm.ai/en/v0.5.3/models/adding_model.html`
+    # instructions for registering our of code-base. I did not see this initialy so I
+    # did not follow it. TBD if worthwhile. What we might do instead, is create a shim
+    # pip module that adds out-of-codebase and then which exposes the additional VLLM
+    # models (only the new ones basically).
+    "SAEEnhancedGemma2ForCausalLM": ("gemma2_sae_enhanced", "SAEEnhancedGemma2ForCausalLM"),
     "GPT2LMHeadModel": ("gpt2", "GPT2LMHeadModel"),
     "GPTBigCodeForCausalLM": ("gpt_bigcode", "GPTBigCodeForCausalLM"),
     "GPTJForCausalLM": ("gpt_j", "GPTJForCausalLM"),

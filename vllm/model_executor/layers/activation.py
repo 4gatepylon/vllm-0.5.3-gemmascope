@@ -12,6 +12,46 @@ from vllm.model_executor.custom_op import CustomOp
 from vllm.model_executor.layers.quantization import QuantizationConfig
 from vllm.model_executor.utils import set_weight_attrs
 
+class JumpReLU(nn.Module):
+    """Used by GemmaScope for Gemma2 SAES.
+    TODO(Adriano) please figure out what is going on with parallel and weight-loading.
+    """
+
+    # <begin> Copied from the ScaledActivation class below. </begin>
+    def __init__(
+        self,
+        intermediate_size: int,
+        input_is_parallel: bool = True,
+        params_dtype: Optional[torch.dtype] = None,
+    ):
+        super().__init__()
+        self.input_is_parallel = input_is_parallel
+        if input_is_parallel:
+            tp_size = get_tensor_model_parallel_world_size()
+            intermediate_size_per_partition = divide(intermediate_size,
+                                                     tp_size)
+        else:
+            intermediate_size_per_partition = intermediate_size
+        if params_dtype is None:
+            params_dtype = torch.get_default_dtype()
+        self.thresholds = nn.Parameter(
+            torch.empty(intermediate_size_per_partition, dtype=params_dtype))
+        set_weight_attrs(self.thresholds, {"weight_loader": self.weight_loader})
+
+    # <end> Copied from the ScaledActivation class below. </end>
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x * (x > self.thresholds)
+
+    def weight_loader(self, param: nn.Parameter, loaded_weight: torch.Tensor):
+        param_data = param.data
+        if self.input_is_parallel:
+            tp_rank = get_tensor_model_parallel_rank()
+            shard_size = param_data.shape[0]
+            start_idx = tp_rank * shard_size
+            loaded_weight = loaded_weight.narrow(0, start_idx, shard_size)
+        assert param_data.shape == loaded_weight.shape
+        param_data.copy_(loaded_weight)
+    
 
 class SiluAndMul(CustomOp):
     """An activation function for SwiGLU.
@@ -208,6 +248,7 @@ _ACTIVATION_REGISTRY = {
     "gelu_pytorch_tanh": nn.GELU(approximate="tanh"),
     "relu": nn.ReLU(),
     "quick_gelu": QuickGELU(),
+    "jumprelu": JumpReLU(),
 }
 
 
