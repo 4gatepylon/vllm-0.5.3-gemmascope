@@ -19,8 +19,16 @@ def _patched_from_pretrained(*args, **kwargs):
 AutoConfig.from_pretrained = _patched_from_pretrained
 
 from vllm import LLM, SamplingParams
-llm = LLM(model="google/gemma-2-2b", load_format="dummy")
+sae_configs = {
+    # random init
+    11: SAEConfig(expansion_factor=8, gemmascope_name_or_path=None),
+}
 
+llm = LLM(
+    model="google/gemma-2-2b",
+    load_format="gemmascope",
+    model_loader_extra_config={"sae_configs": sae_configs},
+)
 # Verify it loaded your custom class
 model = llm.llm_engine.model_executor.driver_worker.model_runner.model
 print(f"Model class: {type(model)}")

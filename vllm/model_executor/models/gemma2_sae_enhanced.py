@@ -34,6 +34,7 @@ from vllm.model_executor.model_loader.weight_utils import default_weight_loader
 from vllm.model_executor.sampling_metadata import SamplingMetadata
 from vllm.sequence import IntermediateTensors, SamplerOutput
 from vllm.model_executor.models.gemma2 import Gemma2Attention, Gemma2MLP
+from vllm.model_executor.model_loader.sae_config import SAEConfig
 from .interfaces import SupportsLoRA
 
 
@@ -79,27 +80,6 @@ class Gemma2SAEEnhanced(nn.Module):
         x = self.act_fn(gate_up)
         x, _ = self.down_proj(x)
         return x
-
-
-# XXX(adriano) move this to the right place please
-from dataclasses import dataclass
-
-
-@dataclass
-class SAEConfig:
-    # If input size is not set, then it is set to the hidden size of the model
-    input_size: int | None = None
-
-    # One of sae_size and expansion_factor must be provided
-    sae_size: int | None = None
-    expansion_factor: int | None = None
-
-    # These must be "jumprelu"
-    hidden_act: str = "jumprelu"
-    hidden_activation: str = "jumprelu"
-
-    # this is carried over from MLP
-    quant_config: Optional[QuantizationConfig] = None
 
 
 class SAEEnhancedGemma2DecoderLayer(nn.Module):
@@ -225,7 +205,7 @@ class SAEEnhancedGemma2Model(nn.Module):
     ) -> None:
         if "sae_configs" not in kwargs:
             raise ValueError("sae_configs must be provided to SAEEnhancedGemma2Model")
-        sae_configs: dict[int, SAEConfig] | None = kwargs.pop("sae_config", None)
+        sae_configs: dict[int, SAEConfig] | None = kwargs.pop("sae_configs", None)
         if sae_configs is None:
             sae_configs = {}
         super().__init__()
