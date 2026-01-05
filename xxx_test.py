@@ -5,19 +5,6 @@ models_module._MODELS["Gemma2ForCausalLM"] = ("gemma2_sae_enhanced", "Gemma2SAEE
 
 # Import your SAEConfig
 from vllm.model_executor.models.gemma2_sae_enhanced import SAEConfig
-
-# Patch AutoConfig to inject sae_configs
-_orig_from_pretrained = AutoConfig.from_pretrained
-def _patched_from_pretrained(*args, **kwargs):
-    config = _orig_from_pretrained(*args, **kwargs)
-    # Attach SAE configs: layer_idx -> SAEConfig
-    config.sae_configs = {
-        10: SAEConfig(expansion_factor=8),
-        11: SAEConfig(expansion_factor=8),
-    }
-    return config
-AutoConfig.from_pretrained = _patched_from_pretrained
-
 from vllm import LLM, SamplingParams
 sae_configs = {
     # random init

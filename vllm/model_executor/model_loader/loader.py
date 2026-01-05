@@ -439,6 +439,7 @@ class GemmaScopeModelLoader(DefaultModelLoader):
                 )
 
             # Initialize or load SAE weights
+            initialized_saes: set[int] = set()
             for layer_idx, sae_config in self.sae_configs.items():
                 sae_module = model.model.layers[layer_idx].sae
                 # NOTE that there are 3 cases here:
@@ -456,17 +457,17 @@ class GemmaScopeModelLoader(DefaultModelLoader):
                     initialize_dummy_weights(sae_module)
                 else:
                     self._load_sae_weights(sae_module, sae_config, layer_idx)
+                initialized_saes.add(layer_idx)
             
             # Load base model weights (reuse parent's iterator)
-            # NOTE: this is heavily using all the default model loader behavior.
-            # The invocation is copy-pasted.
-            # NOTE: this must be called 2nd
+            # NOTE: copied from default, but done AFTER the SAEs
             model.load_weights(
                 self._get_weights_iterator(
                     model_config.model,
                     model_config.revision,
                     fall_back_to_pt=getattr(model, "fall_back_to_pt_during_load", True),
-                )
+                ),
+                initialized_saes=initialized_saes,
             )
 
             # This is copied from the default model loader

@@ -330,7 +330,7 @@ class Gemma2SAEEnhancedForCausalLM(nn.Module, SupportsLoRA):
         next_tokens = self.sampler(logits, sampling_metadata)
         return next_tokens
 
-    def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]):
+    def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]], initialized_saes: set[int] = set()):
         stacked_params_mapping = [
             # (param_name, shard_name, shard_id)
             ("qkv_proj", "q_proj", "q"),
@@ -373,6 +373,24 @@ class Gemma2SAEEnhancedForCausalLM(nn.Module, SupportsLoRA):
             loaded_params.add(name)
 
         unloaded_params = params_dict.keys() - loaded_params
+        # Take into account previous/seperate initializations
+        actually_loaded_sae_params: set[str] = set()
+        for layer_idx in initialized_saes:
+            for param_names, param_types in (
+                (
+                    ["gate_up_proj", "down_proj", "act_fn"],
+                    ["weight", "bias"]
+                ),
+                (
+                    ["act_fn"],
+                    ["thresholds"]
+                )
+            ):
+                for param_name in param_names:
+                    for param_type in param_types:
+                        actually_loaded_sae_params.add(f"model.layers.{layer_idx}.sae.{param_name}.{param_type}")
+        unloaded_params = unloaded_params - actually_loaded_sae_params
+        # Make sure we loaded everything
         if unloaded_params:
             raise RuntimeError(
                 "Some weights are not initialized from checkpoints: "
