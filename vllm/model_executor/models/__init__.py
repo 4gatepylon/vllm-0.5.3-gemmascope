@@ -36,7 +36,7 @@ _GENERATION_MODELS = {
     # did not follow it. TBD if worthwhile. What we might do instead, is create a shim
     # pip module that adds out-of-codebase and then which exposes the additional VLLM
     # models (only the new ones basically).
-    "SAEEnhancedGemma2ForCausalLM": ("gemma2_sae_enhanced", "SAEEnhancedGemma2ForCausalLM"),
+    "Gemma2SAEEnhancedForCausalLM": ("gemma2_sae_enhanced", "Gemma2SAEEnhancedForCausalLM"),
     "GPT2LMHeadModel": ("gpt2", "GPT2LMHeadModel"),
     "GPTBigCodeForCausalLM": ("gpt_bigcode", "GPTBigCodeForCausalLM"),
     "GPTJForCausalLM": ("gpt_j", "GPTJForCausalLM"),

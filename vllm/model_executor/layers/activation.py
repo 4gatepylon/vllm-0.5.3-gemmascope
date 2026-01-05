@@ -48,6 +48,10 @@ class JumpReLU(nn.Module):
             tp_rank = get_tensor_model_parallel_rank()
             shard_size = param_data.shape[0]
             start_idx = tp_rank * shard_size
+            # https://docs.pytorch.org/docs/stable/generated/torch.narrow.html
+            # (does exactly what you expect)
+            # NOTE: this will ONLY work if you shards are all the same exact
+            # size (and the tensor per shard is the exact same size)
             loaded_weight = loaded_weight.narrow(0, start_idx, shard_size)
         assert param_data.shape == loaded_weight.shape
         param_data.copy_(loaded_weight)
@@ -248,7 +252,6 @@ _ACTIVATION_REGISTRY = {
     "gelu_pytorch_tanh": nn.GELU(approximate="tanh"),
     "relu": nn.ReLU(),
     "quick_gelu": QuickGELU(),
-    "jumprelu": JumpReLU(),
 }
 
 

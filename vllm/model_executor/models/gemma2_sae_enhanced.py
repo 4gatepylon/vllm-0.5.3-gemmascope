@@ -37,7 +37,7 @@ from vllm.model_executor.models.gemma2 import Gemma2Attention, Gemma2MLP
 from .interfaces import SupportsLoRA
 
 
-class Gemma2SAE(nn.Module):
+class Gemma2SAEEnhanced(nn.Module):
 
     def __init__(
         self,
@@ -127,9 +127,12 @@ class SAEEnhancedGemma2DecoderLayer(nn.Module):
         )
 
         # NOTE: you put the SAE on the layer who takes it AS OUTPUT
+        # XXX adriano it looks like if this here is set to non-None then we need to have
+        # the SAE in the safetensors dict for this to work! with the proper names...
+        # (which somehow we need to get)
         self.sae = None
         if self.sae_config is not None:
-            self.sae = Gemma2SAE(
+            self.sae = Gemma2SAEEnhanced(
                 input_size=config.hidden_size,
                 sae_size=config.hidden_size * 8, # XXX
                 hidden_act="jumprelu",
@@ -241,7 +244,7 @@ class SAEEnhancedGemma2Model(nn.Module):
         return hidden_states
 
 
-class SAEEnhancedGemma2ForCausalLM(nn.Module, SupportsLoRA):
+class Gemma2SAEEnhancedForCausalLM(nn.Module, SupportsLoRA):
     packed_modules_mapping = {
         "qkv_proj": [
             "q_proj",
@@ -271,7 +274,8 @@ class SAEEnhancedGemma2ForCausalLM(nn.Module, SupportsLoRA):
         cache_config: Optional[CacheConfig] = None,
         quant_config: Optional[QuantizationConfig] = None,
         lora_config: Optional[LoRAConfig] = None,
-        # TODO(Adriano) add SAE configuration here
+        # TODO(Adriano) add SAE configuration here; I'm not sure how if at all it will
+        # be passed in (unclear how the arguments are hydrated here...)
     ) -> None:
         del lora_config  # Unused.
         super().__init__()
