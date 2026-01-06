@@ -25,11 +25,18 @@ from vllm.config import CacheConfig, LoRAConfig
 from vllm.distributed import get_tensor_model_parallel_world_size
 from vllm.model_executor.layers.activation import JumpReLU
 from vllm.model_executor.layers.layernorm import GemmaRMSNorm
-from vllm.model_executor.layers.linear import ColumnParallelLinear, RowParallelLinear
+from vllm.model_executor.layers.linear import (
+    ColumnParallelLinear,
+    RowParallelLinear,
+)
 from vllm.model_executor.layers.logits_processor import LogitsProcessor
-from vllm.model_executor.layers.quantization.base_config import QuantizationConfig
+from vllm.model_executor.layers.quantization.base_config import (
+    QuantizationConfig,
+)
 from vllm.model_executor.layers.sampler import Sampler
-from vllm.model_executor.layers.vocab_parallel_embedding import VocabParallelEmbedding
+from vllm.model_executor.layers.vocab_parallel_embedding import (
+    VocabParallelEmbedding,
+)
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
 from vllm.model_executor.sampling_metadata import SamplingMetadata
 from vllm.sequence import IntermediateTensors, SamplerOutput
@@ -50,7 +57,7 @@ class Gemma2SAEEnhanced(nn.Module):
         super().__init__()
         if quant_config is not None:
             raise ValueError("Quantization config is not supported for SAE yet")
-        self.gate_up_proj = ColumnParallelLinear(
+        self.W_enc = ColumnParallelLinear(
             input_size=input_size,
             output_size=sae_size,
             # TODO(Adriano) we may want to verify it is true that ALL of the
@@ -60,7 +67,7 @@ class Gemma2SAEEnhanced(nn.Module):
             bias=True,
             quant_config=quant_config,
         )
-        self.down_proj = RowParallelLinear(
+        self.W_dec = RowParallelLinear(
             input_size=sae_size,
             output_size=input_size,
             bias=True,
@@ -76,9 +83,9 @@ class Gemma2SAEEnhanced(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Copied from Gemma2MLP classes
-        gate_up, _ = self.gate_up_proj(x)
+        gate_up, _ = self.W_enc(x)
         x = self.act_fn(gate_up)
-        x, _ = self.down_proj(x)
+        x, _ = self.W_dec(x)
         return x
 
 
@@ -121,7 +128,9 @@ class SAEEnhancedGemma2DecoderLayer(nn.Module):
             hidden_activation=config.hidden_activation,
             quant_config=quant_config,
         )
-        self.input_layernorm = GemmaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.input_layernorm = GemmaRMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps
+        )
         self.post_attention_layernorm = GemmaRMSNorm(
             config.hidden_size, eps=config.rms_norm_eps
         )
@@ -167,12 +176,16 @@ class SAEEnhancedGemma2DecoderLayer(nn.Module):
         kv_cache: torch.Tensor,
         attn_metadata: AttentionMetadata,
         residual: Optional[torch.Tensor],
-    ) -> Tuple[torch.Tensor, torch.Tensor | None]:  # <- MAY return None! (changed)
+    ) -> Tuple[
+        torch.Tensor, torch.Tensor | None
+    ]:  # <- MAY return None! (changed)
         if residual is None:
             residual = hidden_states
             hidden_states = self.input_layernorm(hidden_states)
         else:
-            hidden_states, residual = self.input_layernorm(hidden_states, residual)
+            hidden_states, residual = self.input_layernorm(
+                hidden_states, residual
+            )
         hidden_states = self.self_attn(
             positions=positions,
             hidden_states=hidden_states,
@@ -204,8 +217,12 @@ class SAEEnhancedGemma2Model(nn.Module):
         **kwargs,
     ) -> None:
         if "sae_configs" not in kwargs:
-            raise ValueError("sae_configs must be provided to SAEEnhancedGemma2Model")
-        sae_configs: dict[int, SAEConfig] | None = kwargs.pop("sae_configs", None)
+            raise ValueError(
+                "sae_configs must be provided to SAEEnhancedGemma2Model"
+            )
+        sae_configs: dict[int, SAEConfig] | None = kwargs.pop(
+            "sae_configs", None
+        )
         if sae_configs is None:
             sae_configs = {}
         super().__init__()
@@ -297,7 +314,9 @@ class Gemma2SAEEnhancedForCausalLM(nn.Module, SupportsLoRA):
         super().__init__()
         self.config = config
         self.quant_config = quant_config
-        self.model = SAEEnhancedGemma2Model(config, cache_config, quant_config, **kwargs)
+        self.model = SAEEnhancedGemma2Model(
+            config, cache_config, quant_config, **kwargs
+        )
         self.logits_processor = LogitsProcessor(
             config.vocab_size, soft_cap=config.final_logit_softcapping
         )
@@ -311,7 +330,9 @@ class Gemma2SAEEnhancedForCausalLM(nn.Module, SupportsLoRA):
         attn_metadata: AttentionMetadata,
         intermediate_tensors: Optional[IntermediateTensors] = None,
     ) -> torch.Tensor:
-        hidden_states = self.model(input_ids, positions, kv_caches, attn_metadata)
+        hidden_states = self.model(
+            input_ids, positions, kv_caches, attn_metadata
+        )
         return hidden_states
 
     def compute_logits(
@@ -330,7 +351,11 @@ class Gemma2SAEEnhancedForCausalLM(nn.Module, SupportsLoRA):
         next_tokens = self.sampler(logits, sampling_metadata)
         return next_tokens
 
-    def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]], initialized_saes: set[int] = set()):
+    def load_weights(
+        self,
+        weights: Iterable[Tuple[str, torch.Tensor]],
+        initialized_saes: set[int] = set(),
+    ):
         stacked_params_mapping = [
             # (param_name, shard_name, shard_id)
             ("qkv_proj", "q_proj", "q"),
@@ -368,7 +393,9 @@ class Gemma2SAEEnhancedForCausalLM(nn.Module, SupportsLoRA):
                     # the disk contents twice.
                     continue
                 param = params_dict[name]
-                weight_loader = getattr(param, "weight_loader", default_weight_loader)
+                weight_loader = getattr(
+                    param, "weight_loader", default_weight_loader
+                )
                 weight_loader(param, loaded_weight)
             loaded_params.add(name)
 
@@ -377,18 +404,14 @@ class Gemma2SAEEnhancedForCausalLM(nn.Module, SupportsLoRA):
         actually_loaded_sae_params: set[str] = set()
         for layer_idx in initialized_saes:
             for param_names, param_types in (
-                (
-                    ["gate_up_proj", "down_proj", "act_fn"],
-                    ["weight", "bias"]
-                ),
-                (
-                    ["act_fn"],
-                    ["thresholds"]
-                )
+                (["W_enc", "W_dec", "act_fn"], ["weight", "bias"]),
+                (["act_fn"], ["thresholds"]),
             ):
                 for param_name in param_names:
                     for param_type in param_types:
-                        actually_loaded_sae_params.add(f"model.layers.{layer_idx}.sae.{param_name}.{param_type}")
+                        actually_loaded_sae_params.add(
+                            f"model.layers.{layer_idx}.sae.{param_name}.{param_type}"
+                        )
         unloaded_params = unloaded_params - actually_loaded_sae_params
         # Make sure we loaded everything
         if unloaded_params:

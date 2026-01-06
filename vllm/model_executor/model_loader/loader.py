@@ -28,7 +28,9 @@ from vllm.config import (
 )
 from vllm.envs import VLLM_USE_MODELSCOPE
 from vllm.logger import init_logger
-from vllm.model_executor.layers.quantization.base_config import QuantizationConfig
+from vllm.model_executor.layers.quantization.base_config import (
+    QuantizationConfig,
+)
 from vllm.model_executor.model_loader.tensorizer import (
     TensorizerConfig,
     is_vllm_tensorized,
@@ -207,7 +209,10 @@ class DefaultModelLoader(BaseModelLoader):
         return None
 
     def _prepare_weights(
-        self, model_name_or_path: str, revision: Optional[str], fall_back_to_pt: bool
+        self,
+        model_name_or_path: str,
+        revision: Optional[str],
+        fall_back_to_pt: bool,
     ) -> Tuple[str, List[str], bool]:
         """Prepare weights for the model.
 
@@ -272,7 +277,9 @@ class DefaultModelLoader(BaseModelLoader):
                 hf_weights_files, hf_folder
             )
         else:
-            hf_weights_files = filter_files_not_needed_for_inference(hf_weights_files)
+            hf_weights_files = filter_files_not_needed_for_inference(
+                hf_weights_files
+            )
 
         if len(hf_weights_files) == 0:
             raise RuntimeError(
@@ -282,7 +289,10 @@ class DefaultModelLoader(BaseModelLoader):
         return hf_folder, hf_weights_files, use_safetensors
 
     def _get_weights_iterator(
-        self, model_name_or_path: str, revision: Optional[str], fall_back_to_pt: bool
+        self,
+        model_name_or_path: str,
+        revision: Optional[str],
+        fall_back_to_pt: bool,
     ) -> Generator[Tuple[str, torch.Tensor], None, None]:
         """Get an iterator for the model weights based on the load format."""
         hf_folder, hf_weights_files, use_safetensors = self._prepare_weights(
@@ -340,7 +350,9 @@ class DefaultModelLoader(BaseModelLoader):
                 self._get_weights_iterator(
                     model_config.model,
                     model_config.revision,
-                    fall_back_to_pt=getattr(model, "fall_back_to_pt_during_load", True),
+                    fall_back_to_pt=getattr(
+                        model, "fall_back_to_pt_during_load", True
+                    ),
                 ),
             )
 
@@ -378,16 +390,17 @@ class GemmaScopeModelLoader(DefaultModelLoader):
             )
 
         # Load and sanity check types
-        self.sae_configs: Dict[int, Any] = load_config.model_loader_extra_config[
-            "sae_configs"
-        ]
+        self.sae_configs: Dict[int, Any] = (
+            load_config.model_loader_extra_config["sae_configs"]
+        )
         if not all(isinstance(key, int) for key in self.sae_configs.keys()):
             raise ValueError(
                 "GemmaScopeModelLoader requires 'sae_configs' to be a dictionary "
                 "with integer keys"
             )
         if not all(
-            isinstance(value, (dict, SAEConfig)) for value in self.sae_configs.values()
+            isinstance(value, (dict, SAEConfig))
+            for value in self.sae_configs.values()
         ):
             raise ValueError(
                 "GemmaScopeModelLoader requires 'sae_configs' to be a dictionary "
@@ -397,11 +410,12 @@ class GemmaScopeModelLoader(DefaultModelLoader):
             key: (value if isinstance(value, SAEConfig) else SAEConfig(**value))
             for key, value in self.sae_configs.items()
         }
-        if not self.sae_configs:
-            raise ValueError(
-                "GemmaScopeModelLoader requires at least one SAE config in "
-                "'sae_configs'"
-            )
+        # Length 0 => no SAEs (vanilla/identity)
+        # if not self.sae_configs:
+        #     raise ValueError(
+        #         "GemmaScopeModelLoader requires at least one SAE config in "
+        #         "'sae_configs'"
+        #     )
 
     def load_model(
         self,
@@ -416,7 +430,7 @@ class GemmaScopeModelLoader(DefaultModelLoader):
     ) -> nn.Module:
         with set_default_torch_dtype(model_config.dtype):
             with torch.device(device_config.device):
-                # NOTE: Manually init model with sae_configs (to suppor the extra
+                # NOTE: Manually init model with sae_configs (to support the extra
                 # kwargs...)
                 model_class = get_model_architecture(model_config)[0]
                 expected_model_class_name = "Gemma2SAEEnhancedForCausalLM"
@@ -424,9 +438,14 @@ class GemmaScopeModelLoader(DefaultModelLoader):
                     raise ValueError(
                         f"GemmaScopeModelLoader only supports {expected_model_class_name}, got {model_class.__name__}"
                     )
-                quant_config = _get_quantization_config(model_config, self.load_config)
+                quant_config = _get_quantization_config(
+                    model_config, self.load_config
+                )
                 extra_kwargs = _get_model_initialization_kwargs(
-                    model_class, lora_config, multimodal_config, scheduler_config
+                    model_class,
+                    lora_config,
+                    multimodal_config,
+                    scheduler_config,
                 )
                 # NOTE: we make sure to add the kwargs here
                 extra_kwargs["sae_configs"] = self.sae_configs
@@ -449,8 +468,8 @@ class GemmaScopeModelLoader(DefaultModelLoader):
                 if sae_module is None:
                     if sae_config.gemmascope_name_or_path is not None:
                         raise ValueError(
-                            "SAE module is None but " + 
-                            f"sae_config.gemmascope_name_or_path is not None for layer {layer_idx}"
+                            "SAE module is None but "
+                            + f"sae_config.gemmascope_name_or_path is not None for layer {layer_idx}"
                         )
                     continue
                 if sae_config.gemmascope_name_or_path is None:
@@ -458,14 +477,16 @@ class GemmaScopeModelLoader(DefaultModelLoader):
                 else:
                     self._load_sae_weights(sae_module, sae_config, layer_idx)
                 initialized_saes.add(layer_idx)
-            
+
             # Load base model weights (reuse parent's iterator)
             # NOTE: copied from default, but done AFTER the SAEs
             model.load_weights(
                 self._get_weights_iterator(
                     model_config.model,
                     model_config.revision,
-                    fall_back_to_pt=getattr(model, "fall_back_to_pt_during_load", True),
+                    fall_back_to_pt=getattr(
+                        model, "fall_back_to_pt_during_load", True
+                    ),
                 ),
                 initialized_saes=initialized_saes,
             )
@@ -478,10 +499,29 @@ class GemmaScopeModelLoader(DefaultModelLoader):
 
         return model.eval()
 
-    def _load_sae_weights(self, sae_module: nn.Module, sae_config, layer_idx: int):
+    def _load_sae_weights(
+        self,
+        sae_module: nn.Module,
+        sae_config: SAEConfig,
+        force_download: bool = False,
+    ):
         """Load SAE weights from path. Implement later."""
-        # XXX(Adriano) For now, just dummy init - replace with real loading later
-        initialize_dummy_weights(sae_module)
+        weights_iterator = sae_config.get_sae_weights_iterator(
+            force_download=force_download,
+            device=sae_module.device,
+            ensure_strict_keys=True,  # Defensive code here
+        )
+        for weight_state_dict_path, data in weights_iterator:
+            param_path = sae_config.get_sae_parameter_path(
+                weight_state_dict_path,
+            )
+            param = sae_module.get_parameter(param_path)
+            data = data.to(dtype=param.dtype, device=param.device)
+            if data.shape != param.shape:
+                raise ValueError(
+                    f"Shape mismatch for {param_path}: {data.shape} != {param.shape}"
+                )
+            param.data.copy_(data)
 
 
 class DummyModelLoader(BaseModelLoader):
@@ -540,7 +580,9 @@ class TensorizerLoader(BaseModelLoader):
         self.tensorizer_config.verify_with_model_config(model_config)
         self.tensorizer_config.verify_with_parallel_config(parallel_config)
 
-    def _get_weights_iterator(self) -> Generator[Tuple[str, torch.Tensor], None, None]:
+    def _get_weights_iterator(
+        self,
+    ) -> Generator[Tuple[str, torch.Tensor], None, None]:
         tensorizer_args = self.tensorizer_config._construct_tensorizer_args()
         return tensorizer_weights_iterator(tensorizer_args)
 
@@ -588,7 +630,9 @@ class TensorizerLoader(BaseModelLoader):
         with set_default_torch_dtype(model_config.dtype):
             with torch.device(device_config.device):
                 model_class = get_model_architecture(model_config)[0]
-                quant_config = _get_quantization_config(model_config, self.load_config)
+                quant_config = _get_quantization_config(
+                    model_config, self.load_config
+                )
                 extra_kwargs = _get_model_initialization_kwargs(
                     model_class, lora_config, multimodal_config
                 )
@@ -620,7 +664,8 @@ class TensorizerLoader(BaseModelLoader):
             from vllm.distributed import get_tensor_model_parallel_rank
 
             self.tensorizer_config.tensorizer_uri = (
-                self.tensorizer_config.tensorizer_uri % get_tensor_model_parallel_rank()
+                self.tensorizer_config.tensorizer_uri
+                % get_tensor_model_parallel_rank()
             )
 
         if is_vllm_tensorized(self.tensorizer_config):
@@ -632,7 +677,11 @@ class TensorizerLoader(BaseModelLoader):
                 cache_config,
             )
         return self._load_model_serialized_cpu(
-            model_config, device_config, lora_config, multimodal_config, cache_config
+            model_config,
+            device_config,
+            lora_config,
+            multimodal_config,
+            cache_config,
         )
 
     @staticmethod
@@ -672,7 +721,9 @@ class ShardedStateLoader(BaseModelLoader):
             )
 
     @staticmethod
-    def _filter_subtensors(tensors: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def _filter_subtensors(
+        tensors: Dict[str, torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
         """
         Filter out all tensors that share the same memory or a subset of the
         memory of another tensor.
@@ -707,7 +758,9 @@ class ShardedStateLoader(BaseModelLoader):
                     result[k] = t
         return result
 
-    def _prepare_weights(self, model_name_or_path: str, revision: Optional[str]):
+    def _prepare_weights(
+        self, model_name_or_path: str, revision: Optional[str]
+    ):
         if os.path.isdir(model_name_or_path):
             return model_name_or_path
         else:
@@ -784,7 +837,9 @@ class ShardedStateLoader(BaseModelLoader):
                         param_data.copy_(tensor)
                         state_dict.pop(key)
             if state_dict:
-                raise ValueError(f"Missing keys {tuple(state_dict)} in loaded state!")
+                raise ValueError(
+                    f"Missing keys {tuple(state_dict)} in loaded state!"
+                )
         return model.eval()
 
     @staticmethod
@@ -849,7 +904,8 @@ class BitsAndBytesModelLoader(BaseModelLoader):
         # file is not provided, we will quantize the default modules.
         if (
             not load_config.model_loader_extra_config
-            or "qlora_adapter_name_or_path" not in load_config.model_loader_extra_config
+            or "qlora_adapter_name_or_path"
+            not in load_config.model_loader_extra_config
         ):
             self.target_modules = self.default_target_modules
             return
@@ -883,7 +939,9 @@ class BitsAndBytesModelLoader(BaseModelLoader):
                     break
 
         if not config_file_path:
-            raise ValueError(f"Cannot find adapter config file in {qlora_adapter}")
+            raise ValueError(
+                f"Cannot find adapter config file in {qlora_adapter}"
+            )
 
         return config_file_path
 
@@ -900,7 +958,9 @@ class BitsAndBytesModelLoader(BaseModelLoader):
 
         if is_local:
             for pattern in allowed_patterns:
-                weight_files = glob.glob(os.path.join(model_name_or_path, pattern))
+                weight_files = glob.glob(
+                    os.path.join(model_name_or_path, pattern)
+                )
                 if weight_files:
                     return weight_files, pattern
         else:
@@ -932,7 +992,9 @@ class BitsAndBytesModelLoader(BaseModelLoader):
         )
 
         if matched_pattern != "*.safetensors":
-            hf_weights_files = filter_files_not_needed_for_inference(hf_weights_files)
+            hf_weights_files = filter_files_not_needed_for_inference(
+                hf_weights_files
+            )
 
         if len(hf_weights_files) == 0:
             raise RuntimeError(
@@ -985,7 +1047,9 @@ class BitsAndBytesModelLoader(BaseModelLoader):
                     loaded_weight = weight_tensor.cuda().data
                     with set_default_torch_dtype(torch.float32):
                         processed_weight, quant_state = quantize_4bit(
-                            loaded_weight, compress_statistics=True, quant_type="nf4"
+                            loaded_weight,
+                            compress_statistics=True,
+                            quant_type="nf4",
                         )
 
                     quant_state_dict[weight_name] = quant_state
@@ -996,7 +1060,9 @@ class BitsAndBytesModelLoader(BaseModelLoader):
 
         return generator(), quant_state_dict
 
-    def _load_weights(self, model_config: ModelConfig, model: nn.Module) -> None:
+    def _load_weights(
+        self, model_config: ModelConfig, model: nn.Module
+    ) -> None:
         if not hasattr(model, "load_weights"):
             raise AttributeError(
                 "The required method 'load_weights' is not defined in class"
@@ -1010,11 +1076,14 @@ class BitsAndBytesModelLoader(BaseModelLoader):
             )
 
         logger.info(
-            "Loading weights with BitsAndBytes quantization. " " May take a while ..."
+            "Loading weights with BitsAndBytes quantization. "
+            " May take a while ..."
         )
 
-        qweight_iterator, quant_state_dict = self._get_quantized_weights_iterator(
-            model_config.model, model_config.revision
+        qweight_iterator, quant_state_dict = (
+            self._get_quantized_weights_iterator(
+                model_config.model, model_config.revision
+            )
         )
 
         model.load_weights(qweight_iterator)
@@ -1031,7 +1100,9 @@ class BitsAndBytesModelLoader(BaseModelLoader):
             ) in model.bitsandbytes_stacked_params_mapping.items():
                 if shard_name in quant_param_name:
                     shard_index = index
-                    quant_param_name = quant_param_name.replace(shard_name, weight_name)
+                    quant_param_name = quant_param_name.replace(
+                        shard_name, weight_name
+                    )
                     break
 
             if quant_param_name not in param_dict:
@@ -1042,9 +1113,9 @@ class BitsAndBytesModelLoader(BaseModelLoader):
             if quant_param_name not in stacked_quant_state_dict:
                 stacked_quant_state_dict[quant_param_name] = {}
 
-            stacked_quant_state_dict[quant_param_name][shard_index] = quant_state_dict[
-                non_stacked_param_name
-            ]
+            stacked_quant_state_dict[quant_param_name][shard_index] = (
+                quant_state_dict[non_stacked_param_name]
+            )
 
         # save quant_states and offsets as the attributes of the parameters
         for param_name, param in param_dict.items():
@@ -1054,11 +1125,15 @@ class BitsAndBytesModelLoader(BaseModelLoader):
 
                 pack_ratio = getattr(param, "pack_factor", -1)
                 if pack_ratio == -1:
-                    raise ValueError(f"pack_factor not set for parameter {param_name}.")
+                    raise ValueError(
+                        f"pack_factor not set for parameter {param_name}."
+                    )
 
                 num_elements = [0] * len(quant_states)
                 for seq, quant_state in enumerate(quant_states.items()):
-                    num_elements[seq] = math.prod(quant_state[1].shape) // pack_ratio
+                    num_elements[seq] = (
+                        math.prod(quant_state[1].shape) // pack_ratio
+                    )
 
                 offsets = np.concatenate(([0], np.cumsum(num_elements)))
                 set_weight_attrs(param, {"bnb_shard_offsets": offsets})
