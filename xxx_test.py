@@ -29,8 +29,9 @@ sae_configs = {
     # 12: SAEConfig(sae_size=4096),
 }
 
+model_name = "google/gemma-2-9b"
 llm = LLM(
-    model="google/gemma-2-2b",
+    model=model_name,
     load_format="gemmascope",
     model_loader_extra_config={"sae_configs": sae_configs},
     device="cuda:0",
@@ -45,7 +46,7 @@ message = "A: B, B: D, D:E, F: G, H: I, I: J, J: K, K: L, L: M, M: N, N: O,"
 print("=" * 100)
 print("Compare tokenization:")
 vllm_tokenizer = llm.get_tokenizer()
-tf_tokenizer = AutoTokenizer.from_pretrained("google/gemma-2-2b")
+tf_tokenizer = AutoTokenizer.from_pretrained(model_name)
 
 # Compare tokenization
 hf_tokens = tf_tokenizer.encode(message)
@@ -65,7 +66,7 @@ print("=" * 100)
 print("=" * 100)
 print("HF inputs/outputs:")
 tf_model = AutoModelForCausalLM.from_pretrained(
-    "google/gemma-2-2b",
+    model_name,
     torch_dtype=torch.bfloat16,
     device_map={"": "cuda:1"}
 )
